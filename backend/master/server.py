@@ -24,6 +24,7 @@ from backend.common.storage import Storage, list_files, read_json
 from backend.master.fault_tolerance import FaultTolerance
 from backend.master.job_manager import JobManager
 from backend.master.metrics import Metrics
+from backend.master.preflight import PreflightFailure
 from backend.master.registry import WorkerRegistry
 from backend.master.scheduler import Scheduler
 from backend.master.shuffle import ShuffleCoordinator
@@ -45,8 +46,9 @@ class Master:
         self.config = (config or self.config_manager.load_cluster()).validated()
 
         self.logbus = LogBus(self.storage)
-        self.job_manager = JobManager(self.storage, self.config, self.logbus)
         self.registry = WorkerRegistry(self.storage, self.config)
+        self.job_manager = JobManager(self.storage, self.config, self.logbus,
+                                      registry=self.registry)
         self.metrics = Metrics(self.storage)
         self.shuffle = ShuffleCoordinator(self.storage, self.job_manager, self.registry, self.logbus)
         self.fault_tolerance = FaultTolerance(self.storage, self.job_manager, self.config, self.logbus)
@@ -78,6 +80,8 @@ class Master:
         app.add_url_rule("/api/functions", "functions", self._functions, methods=["GET"])
         app.add_url_rule("/api/samples", "samples", self._samples, methods=["GET"])
         app.add_url_rule("/api/jobs", "jobs", self._jobs, methods=["GET", "POST"])
+        app.add_url_rule("/api/jobs/preflight", "jobs_preflight",
+                         self._jobs_preflight, methods=["POST"])
         app.add_url_rule("/api/jobs/<job_id>", "job_detail", self._job_detail, methods=["GET"])
         app.add_url_rule("/api/jobs/<job_id>/cancel", "job_cancel", self._job_cancel, methods=["POST"])
         app.add_url_rule("/api/jobs/<job_id>/tasks", "job_tasks", self._job_tasks, methods=["GET"])
@@ -178,10 +182,19 @@ class Master:
             body["_defaults"] = self.config_manager.load_defaults().to_dict()
             try:
                 job = self.job_manager.submit(body)
+            except PreflightFailure as exc:
+                return jsonify({"error": str(exc), "preflight": exc.report}), 422
             except (ValueError, KeyError) as exc:
                 return jsonify({"error": str(exc)}), 400
             return jsonify(self.job_manager.job_summary(job)), 201
         return jsonify({"jobs": [self.job_manager.job_summary(j) for j in self.job_manager.list_jobs()]})
+
+    def _jobs_preflight(self):
+        """Dry-run validation: never creates a job, task, shard or log entry."""
+        body = request.get_json(silent=True) or {}
+        body["_defaults"] = self.config_manager.load_defaults().to_dict()
+        report = self.job_manager.preflight.run(body)
+        return jsonify(report), 200
 
     def _job_detail(self, job_id: str):
         job, err, code = self._get_job(job_id)

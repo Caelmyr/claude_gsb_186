@@ -20,17 +20,20 @@ from backend.common.jsonutil import now_ms
 from backend.common.logbus import LogBus
 from backend.common.models import Job, Task, new_job
 from backend.common.storage import Storage, list_files, list_subdirs, read_json
+from backend.master.preflight import Preflight, PreflightFailure
 from backend.master.shard_planner import ShardPlanner
-from backend.tasks.registry import has_mapper, has_reducer
 from backend.tasks.samples import input_kind_for
 
 
 class JobManager:
-    def __init__(self, storage: Storage, config, logbus: LogBus) -> None:
+    def __init__(self, storage: Storage, config, logbus: LogBus, registry=None) -> None:
         self.storage = storage
         self.config = config
         self.logbus = logbus
         self.planner = ShardPlanner(storage, config)
+        self.registry = registry
+        self.preflight = Preflight(storage, config, self.planner, job_manager=self,
+                                   registry=registry)
         self._jobs: dict[str, Job] = {}
         self._tasks: dict[str, dict[str, Task]] = {}
         self._lock = threading.RLock()
@@ -70,22 +73,28 @@ class JobManager:
     # Submission
     # ------------------------------------------------------------------
     def submit(self, payload: dict) -> Job:
+        payload = dict(payload or {})
+
+        # ---- Pre-submission dry run: hard failures block submission ---------
+        report = self.preflight.run(payload)
+        if not report["ok"]:
+            self.logbus.warn("", f"job preflight rejected: {report['failed']} check(s) failed",
+                             task_id="preflight")
+            raise PreflightFailure(report)
+
+        defaults = payload.get("_defaults") or {}
         name = str(payload.get("name") or "untitled").strip() or "untitled"
         mapper = str(payload.get("mapper") or "")
         reducer = str(payload.get("reducer") or "")
-        if not has_mapper(mapper):
-            raise ValueError(f"unknown mapper: {mapper!r}")
-        if not has_reducer(reducer):
-            raise ValueError(f"unknown reducer: {reducer!r}")
-
-        defaults = payload.get("_defaults") or {}
         num_map = int(payload.get("num_map_tasks", defaults.get("num_map_tasks", 8)))
         num_reduce = int(payload.get("num_reduce_tasks", defaults.get("num_reduce_tasks", 4)))
         input_rows = int(payload.get("input_rows", defaults.get("input_rows", 12000)))
         params = dict(payload.get("params") or {})
         params["input_kind"] = input_kind_for(mapper)
+        depends_on = [str(d) for d in (payload.get("depends_on") or [])]
 
-        job = new_job(name, mapper, reducer, num_map, num_reduce, input_rows, params)
+        job = new_job(name, mapper, reducer, num_map, num_reduce, input_rows, params,
+                      depends_on=depends_on)
 
         with self._lock:
             plan = self.planner.plan(job)
@@ -242,6 +251,7 @@ class JobManager:
             "finished_ms": job.finished_ms,
             "error": job.error,
             "params": job.params,
+            "depends_on": list(job.depends_on),
             "stats": job.stats,
             "task_status": by_status,
             "stage_progress": self.stage_progress(job),

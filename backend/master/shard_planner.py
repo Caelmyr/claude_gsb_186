@@ -45,18 +45,16 @@ class ShardPlanner:
         return (self.config.seed + sum(ord(c) for c in job.job_id)) % (2 ** 31 - 1)
 
     def plan(self, job: Job) -> dict:
-        """Generate input records, split them into shards, and build tasks."""
-        kind = job.params.get("input_kind", "wordcount")
-        rows = max(1, int(job.input_rows))
-        records = generate_input_records(kind, rows, self._seed_for(job))
+        """Generate input records, split them into shards, and build tasks.
 
-        # Granularity: never create more map tasks than there are input records.
-        num_map = max(1, min(job.num_map_tasks, len(records)))
-        job.num_map_tasks = num_map
-        chunks = split_evenly(records, num_map)
+        Shard documents are persisted to the JSON store.  The purely
+        computational half lives in :meth:`build_inputs` so the preflight check
+        can exercise the exact same planning logic without writing anything.
+        """
+        built = self.build_inputs(job)
 
         input_shards: list[str] = []
-        for i, chunk in enumerate(chunks):
+        for i, chunk in enumerate(built["chunks"]):
             sid = shard_id("in", i)
             self.storage.write({
                 "shard_id": sid,
@@ -69,14 +67,40 @@ class ShardPlanner:
             }, "jobs", job.job_id, "shards", C.STAGE_INPUT, f"{sid}.json")
             input_shards.append(sid)
 
+        return {
+            "input_shards": input_shards,
+            "map_tasks": built["map_tasks"],
+            "reduce_tasks": built["reduce_tasks"],
+            "total_records": len(built["records"]) + 1,
+        }
+
+    def build_inputs(self, job: Job) -> dict:
+        """Generate the would-be input records, shard chunks and tasks.
+
+        This performs **no** filesystem writes and **no** map/reduce work, so it
+        is safe to call from a pre-submission dry run.  As in :meth:`plan`, the
+        effective map-task count is clamped against the record count and the
+        clamping is reflected back onto ``job.num_map_tasks``.
+        """
+        kind = job.params.get("input_kind", "wordcount")
+        rows = max(1, int(job.input_rows))
+        records = generate_input_records(kind, rows, self._seed_for(job))
+
+        # Granularity: never create more map tasks than there are input records.
+        num_map = max(1, min(job.num_map_tasks, len(records)))
+        job.num_map_tasks = num_map
+        chunks = split_evenly(records, num_map)
+
         map_tasks = [new_task(job, C.TASK_MAP, i) for i in range(num_map)]
         reduce_tasks = [new_task(job, C.TASK_REDUCE, p) for p in range(job.num_reduce_tasks)]
 
         return {
-            "input_shards": input_shards,
+            "records": records,
+            "chunks": chunks,
+            "input_shards": [shard_id("in", i) for i in range(num_map)],
             "map_tasks": map_tasks,
             "reduce_tasks": reduce_tasks,
-            "total_records": len(records) + 1,
+            "total_records": len(records),
         }
 
     def load_input_shard(self, job_id: str, shard: str) -> list[Any]:

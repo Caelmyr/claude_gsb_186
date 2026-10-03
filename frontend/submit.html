@@ -48,6 +48,12 @@
             </div>
           </div>
 
+          <label>Grep 检索词 Pattern <span class="sub small muted">（仅 grep_mapper 使用，留空用默认 map）</span></label>
+          <input id="pattern" type="text" placeholder="例如 map">
+
+          <label>前置作业 Dependencies <span class="sub small muted">（逗号/空格分隔的 job id，留空表示无依赖）</span></label>
+          <input id="depends_on" type="text" placeholder="job-…, job-…">
+
           <fieldset>
             <legend>高级 Advanced</legend>
             <label style="display:flex;align-items:center;gap:8px;margin:0">
@@ -56,9 +62,16 @@
             </label>
           </fieldset>
 
-          <div class="mt flex">
-            <button class="btn primary" type="submit">提交作业 Submit Job</button>
-            <span class="hint">提交后跳转至监控页 After submit, open the Monitor page.</span>
+          <div class="mt flex wrap">
+            <button class="btn primary" type="submit">预检并提交 Preflight &amp; Submit</button>
+            <button class="btn" type="button" id="btn-preflight">仅试运行 Preflight only</button>
+            <span class="hint">提交前自动完成只读体检，不通过不会真正提交。A read-only preflight always runs first.</span>
+          </div>
+
+          <div id="force-bar" class="mt preflight-force" hidden>
+            <span>预检仅有警告、没有失败。确认这些警告符合预期后可强制提交。</span>
+            <button class="btn danger small" type="button" id="btn-force">忽略警告并提交 Submit anyway</button>
+            <button class="btn small" type="button" id="btn-back">返回修改 Back</button>
           </div>
         </form>
       </div>
@@ -67,6 +80,12 @@
         <h2>可用函数 <span class="sub">Available functions</span></h2>
         <div id="func-list"></div>
       </div>
+    </div>
+
+    <div class="card mt" id="report-card">
+      <h2>预检结果 <span class="sub">Preflight report</span></h2>
+      <div id="preflight-host"><div id="report" hidden></div></div>
+      <div id="report-placeholder" class="empty">尚未运行预检。点击“预检并提交”或“仅试运行”查看完整体检结果。<br>No preflight run yet.</div>
     </div>
 
     <div class="card mt">
