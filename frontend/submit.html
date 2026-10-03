@@ -48,6 +48,15 @@
             </div>
           </div>
 
+          <div id="pattern-row" class="param-row" hidden>
+            <label>Grep 匹配词 params.pattern</label>
+            <input id="pattern" type="text" value="map" placeholder="每行需要匹配的子串 substring">
+          </div>
+
+          <label>前置作业 Depends on（可选，均需成功后才启动 optional）</label>
+          <select id="depends_on" multiple size="3" class="depends-select"></select>
+          <div class="hint" id="depends_hint">按住 Ctrl/⌘ 可多选；留空表示立即调度。Multi-select with Ctrl/⌘.</div>
+
           <fieldset>
             <legend>高级 Advanced</legend>
             <label style="display:flex;align-items:center;gap:8px;margin:0">
@@ -57,9 +66,10 @@
           </fieldset>
 
           <div class="mt flex">
-            <button class="btn primary" type="submit">提交作业 Submit Job</button>
-            <span class="hint">提交后跳转至监控页 After submit, open the Monitor page.</span>
+            <button class="btn" type="button" id="preflight-btn">预检 / 试运行 Preflight</button>
+            <button class="btn primary" type="submit" id="submit-btn" disabled>提交作业 Submit Job</button>
           </div>
+          <div class="hint mt">先预检再提交：预检不执行真正计算、不创建作业。Run preflight before submitting — no real computation, no job created.</div>
         </form>
       </div>
 
@@ -67,6 +77,12 @@
         <h2>可用函数 <span class="sub">Available functions</span></h2>
         <div id="func-list"></div>
       </div>
+    </div>
+
+    <div class="card mt" id="preflight-card" hidden>
+      <h2>预检报告 <span class="sub">Preflight report</span></h2>
+      <div id="preflight-summary"></div>
+      <div id="preflight-report"></div>
     </div>
 
     <div class="card mt">

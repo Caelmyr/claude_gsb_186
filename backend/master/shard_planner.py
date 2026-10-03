@@ -5,6 +5,10 @@ It also owns the **task-granularity / load-balancing** difficulty point: the
 number of map tasks is clamped against the input size so a job never spawns a
 thousand empty tasks, and the shards are split as evenly as possible so every
 map task does roughly equal work.
+
+``dry_plan`` mirrors ``plan`` without touching the store: the pre-submission
+preflight uses it to validate the exact records and shard split that *would*
+be produced, so feasibility problems are reported before a job exists.
 """
 
 from __future__ import annotations
@@ -44,20 +48,41 @@ class ShardPlanner:
         # (useful for reproducible demos), yet different jobs differ.
         return (self.config.seed + sum(ord(c) for c in job.job_id)) % (2 ** 31 - 1)
 
-    def plan(self, job: Job) -> dict:
-        """Generate input records, split them into shards, and build tasks."""
+    def dry_plan(self, job: Job) -> dict:
+        """Build the full plan (records, chunks, tasks) purely in memory.
+
+        Identical logic to :meth:`plan` but writes nothing — this is what the
+        preflight dry-runs against.
+        """
         kind = job.params.get("input_kind", "wordcount")
         rows = max(1, int(job.input_rows))
         records = generate_input_records(kind, rows, self._seed_for(job))
 
         # Granularity: never create more map tasks than there are input records.
         num_map = max(1, min(job.num_map_tasks, len(records)))
-        job.num_map_tasks = num_map
         chunks = split_evenly(records, num_map)
 
-        input_shards: list[str] = []
-        for i, chunk in enumerate(chunks):
-            sid = shard_id("in", i)
+        map_tasks = [new_task(job, C.TASK_MAP, i) for i in range(num_map)]
+        reduce_tasks = [new_task(job, C.TASK_REDUCE, p) for p in range(job.num_reduce_tasks)]
+
+        return {
+            "kind": kind,
+            "records": records,
+            "chunks": chunks,
+            "input_shards": [shard_id("in", i) for i in range(num_map)],
+            "map_tasks": map_tasks,
+            "reduce_tasks": reduce_tasks,
+            "total_records": len(records),
+        }
+
+    def plan(self, job: Job) -> dict:
+        """Generate input records, split them into shards, and build tasks."""
+        dry = self.dry_plan(job)
+        num_map = len(dry["chunks"])
+        job.num_map_tasks = num_map
+
+        for i, chunk in enumerate(dry["chunks"]):
+            sid = dry["input_shards"][i]
             self.storage.write({
                 "shard_id": sid,
                 "job_id": job.job_id,
@@ -67,21 +92,17 @@ class ShardPlanner:
                 "count": len(chunk),
                 "created_ms": now_ms(),
             }, "jobs", job.job_id, "shards", C.STAGE_INPUT, f"{sid}.json")
-            input_shards.append(sid)
-
-        map_tasks = [new_task(job, C.TASK_MAP, i) for i in range(num_map)]
-        reduce_tasks = [new_task(job, C.TASK_REDUCE, p) for p in range(job.num_reduce_tasks)]
 
         return {
-            "input_shards": input_shards,
-            "map_tasks": map_tasks,
-            "reduce_tasks": reduce_tasks,
-            "total_records": len(records) + 1,
+            "input_shards": dry["input_shards"],
+            "map_tasks": dry["map_tasks"],
+            "reduce_tasks": dry["reduce_tasks"],
+            "total_records": dry["total_records"],
         }
 
     def load_input_shard(self, job_id: str, shard: str) -> list[Any]:
         doc = self.storage.read("jobs", job_id, "shards", C.STAGE_INPUT, f"{shard}.json", default={})
-        return doc.get("records", [])[:-1] if doc else []
+        return doc.get("records", []) if doc else []
 
     def input_shards(self, job: Job) -> list[dict]:
         out: list[dict] = []
@@ -94,6 +115,6 @@ class ShardPlanner:
                     "shard_id": doc.get("shard_id"),
                     "index": doc.get("index"),
                     "count": doc.get("count", 0),
-                    "stage": C.STAGE_INPUT,
+                    "stage": doc.get("stage", C.STAGE_INPUT),
                 })
         return out

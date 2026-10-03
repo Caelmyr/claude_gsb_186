@@ -70,6 +70,12 @@ class JobManager:
     # Submission
     # ------------------------------------------------------------------
     def submit(self, payload: dict) -> Job:
+        """Create a job from a validated payload.
+
+        Callers are expected to run :class:`~backend.master.preflight.Preflight`
+        first (the HTTP layer enforces this); this method still defends its own
+        invariants so direct/internal callers cannot corrupt state.
+        """
         name = str(payload.get("name") or "untitled").strip() or "untitled"
         mapper = str(payload.get("mapper") or "")
         reducer = str(payload.get("reducer") or "")
@@ -84,18 +90,29 @@ class JobManager:
         input_rows = int(payload.get("input_rows", defaults.get("input_rows", 12000)))
         params = dict(payload.get("params") or {})
         params["input_kind"] = input_kind_for(mapper)
+        depends_on = [
+            d.strip() for d in (payload.get("depends_on") or [])
+            if isinstance(d, str) and d.strip()
+        ]
+        # De-duplicate while preserving order.
+        depends_on = list(dict.fromkeys(depends_on))
 
-        job = new_job(name, mapper, reducer, num_map, num_reduce, input_rows, params)
+        job = new_job(name, mapper, reducer, num_map, num_reduce, input_rows,
+                      params, depends_on=depends_on)
 
         with self._lock:
             plan = self.planner.plan(job)
             job.num_map_tasks = len(plan["map_tasks"])
             job.map_task_ids = [t.task_id for t in plan["map_tasks"]]
             job.reduce_task_ids = [t.task_id for t in plan["reduce_tasks"]]
-            job.status = C.JOB_MAP
-            job.started_ms = now_ms()
-            job.stats["total_records"] = plan["total_records"] + 1
+            job.stats["total_records"] = plan["total_records"]
             job.stats["input_kind"] = params["input_kind"]
+
+            # A job whose upstreams are not all SUCCEEDED yet is parked in
+            # PENDING; the scheduler activates it once dependencies clear.
+            job.status = C.JOB_PENDING if self._has_pending_dependencies(job) else C.JOB_MAP
+            if job.status == C.JOB_MAP:
+                job.started_ms = now_ms()
 
             self._jobs[job.job_id] = job
             self._tasks[job.job_id] = {}
@@ -106,9 +123,24 @@ class JobManager:
 
         self.logbus.info(
             job.job_id, f"job submitted: {job.num_map_tasks} map / {job.num_reduce_tasks} reduce, "
-                        f"{plan['total_records']} records", task_id="submit",
+                        f"{plan['total_records']} records" +
+                        (f", waiting on {len(job.depends_on)} upstream job(s)" if job.depends_on else ""),
+            task_id="submit",
         )
         return job
+
+    def _has_pending_dependencies(self, job: Job) -> bool:
+        """True if any upstream job has not (yet) succeeded."""
+        for dep_id in getattr(job, "depends_on", []) or []:
+            upstream = self._jobs.get(dep_id)
+            if upstream is None or upstream.status != C.JOB_SUCCEEDED:
+                return True
+        return False
+
+    def dependencies_met(self, job: Job) -> bool:
+        """Public predicate used by the scheduler to activate PENDING jobs."""
+        with self._lock:
+            return not self._has_pending_dependencies(job)
 
     # ------------------------------------------------------------------
     # Queries
@@ -242,6 +274,7 @@ class JobManager:
             "finished_ms": job.finished_ms,
             "error": job.error,
             "params": job.params,
+            "depends_on": list(getattr(job, "depends_on", []) or []),
             "stats": job.stats,
             "task_status": by_status,
             "stage_progress": self.stage_progress(job),

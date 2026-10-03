@@ -127,6 +127,7 @@ class Job:
     stats: dict = field(default_factory=dict)
     error: str = ""
     params: dict = field(default_factory=dict)
+    depends_on: list[str] = field(default_factory=list)  # upstream job_ids that must succeed first
     version: int = 0
 
     @property
@@ -223,7 +224,8 @@ class MetricSample:
 # Factories
 # ---------------------------------------------------------------------------
 def new_job(name: str, mapper: str, reducer: str, num_map_tasks: int,
-            num_reduce_tasks: int, input_rows: int, params: Optional[dict] = None) -> Job:
+            num_reduce_tasks: int, input_rows: int, params: Optional[dict] = None,
+            depends_on: Optional[list[str]] = None) -> Job:
     return Job(
         job_id=new_id("job"),
         name=name,
@@ -234,6 +236,7 @@ def new_job(name: str, mapper: str, reducer: str, num_map_tasks: int,
         input_rows=input_rows,
         created_ms=now_ms(),
         params=params or {},
+        depends_on=list(depends_on or []),
         stage_progress={s: {"done": 0, "total": 0, "pct": 0.0} for s in C.STAGES},
     )
 

@@ -412,3 +412,38 @@ fieldset legend { font-size: 13px; font-weight: 600; color: var(--ink-2); paddin
 details.accordion { border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; }
 details.accordion summary { cursor: pointer; padding: 10px 14px; font-weight: 600; }
 details.accordion .body { padding: 4px 14px 14px; }
+
+/* ---------------------------------------------------------------------- */
+/* Preflight report (submit page)                                         */
+/* ---------------------------------------------------------------------- */
+.pf-verdict {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 650; font-size: 14px;
+  padding: 10px 14px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); margin-bottom: 8px;
+}
+.pf-verdict.pf-ok { border-left: 3px solid var(--good); color: var(--good); }
+.pf-verdict.pf-bad { border-left: 3px solid var(--critical); color: var(--critical); }
+.pf-verdict-icon { font-size: 16px; }
+.pf-preview { margin-bottom: 12px; }
+.pf-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.pf-item { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: var(--radius-sm); }
+.pf-item.pf-error { background: color-mix(in srgb, var(--critical) 8%, transparent); }
+.pf-item.pf-warning { background: color-mix(in srgb, var(--serious) 8%, transparent); }
+.pf-icon { width: 18px; text-align: center; flex: 0 0 18px; font-weight: 700; }
+.pf-error .pf-icon { color: var(--critical); }
+.pf-warning .pf-icon { color: var(--serious); }
+.pf-info .pf-icon { color: var(--muted); }
+.pf-msg { font-size: 13px; line-height: 1.45; }
+.pf-loc { margin-top: 2px; display: flex; flex-wrap: wrap; gap: 10px; }
+.pf-loc code {
+  background: var(--gridline); padding: 0 5px; border-radius: 3px;
+  font-family: var(--mono, monospace); font-size: 11px;
+}
+.pf-counts { float: right; font-weight: 400; }
+.pf-badge { padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.pf-badge.pf-bad { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+.pf-badge.pf-warn { background: color-mix(in srgb, var(--serious) 18%, transparent); color: var(--serious); }
+.pf-badge.pf-info { background: var(--gridline); color: var(--muted); }
+.depends-select { min-height: 64px; }
+.param-row { margin-top: 10px; }

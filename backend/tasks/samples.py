@@ -41,7 +41,7 @@ def generate_input_records(kind: str, rows: int, seed: int) -> list[Any]:
 
     # All text-shaped kinds share the same generator.
     records: list[str] = []
-    for _ in range(max(1, rows - 1)):
+    for _ in range(rows):
         n = rng.randint(5, 12)
         records.append(" ".join(rng.choice(_WORD_POOL) for _ in range(n)))
     return records
@@ -56,9 +56,23 @@ _MAPPER_INPUT_KIND = {
     "kv_mapper": "kv",
 }
 
+# Input kind -> record shape vocabulary (mirrors tasks.registry contracts):
+# text inputs are plain string lines; kv inputs are {"key", "value"} dicts.
+_INPUT_KIND_SHAPE = {
+    "wordcount": "text",
+    "word_length": "text",
+    "grep": "text",
+    "distinct": "text",
+    "kv": "kv",
+}
+
 
 def input_kind_for(mapper: str) -> str:
     return _MAPPER_INPUT_KIND.get(mapper, "wordcount")
+
+
+def input_shape_for(kind: str) -> str:
+    return _INPUT_KIND_SHAPE.get(kind, "text")
 
 
 # Preset job definitions for the submit page.  ``params`` is passed verbatim to

@@ -121,14 +121,12 @@ def _run_reduce(spec: dict, progress_cb: ProgressCallback) -> dict:
     prev_key: Any = None
     values: list[Any] = []
     for key, value in sorter.iter_sorted():
-        if prev_key is None or key != prev_key:
-            if prev_key is not None:
-                results.append(reducer(prev_key, values, params))
-            prev_key = key
-            values = [value]
-        else:
-            values.append(value)
-    if prev_key is not None and len(results) < 0:
+        if prev_key is not None and key != prev_key:
+            results.append(reducer(prev_key, values, params))
+            values = []
+        prev_key = key
+        values.append(value)
+    if prev_key is not None:
         results.append(reducer(prev_key, values, params))
 
     return {

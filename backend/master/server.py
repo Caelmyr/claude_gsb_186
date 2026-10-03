@@ -24,6 +24,7 @@ from backend.common.storage import Storage, list_files, read_json
 from backend.master.fault_tolerance import FaultTolerance
 from backend.master.job_manager import JobManager
 from backend.master.metrics import Metrics
+from backend.master.preflight import Preflight
 from backend.master.registry import WorkerRegistry
 from backend.master.scheduler import Scheduler
 from backend.master.shuffle import ShuffleCoordinator
@@ -47,6 +48,10 @@ class Master:
         self.logbus = LogBus(self.storage)
         self.job_manager = JobManager(self.storage, self.config, self.logbus)
         self.registry = WorkerRegistry(self.storage, self.config)
+        self.preflight = Preflight(
+            self.storage, self.job_manager.planner, self.job_manager,
+            self.registry, self.config,
+        )
         self.metrics = Metrics(self.storage)
         self.shuffle = ShuffleCoordinator(self.storage, self.job_manager, self.registry, self.logbus)
         self.fault_tolerance = FaultTolerance(self.storage, self.job_manager, self.config, self.logbus)
@@ -78,6 +83,8 @@ class Master:
         app.add_url_rule("/api/functions", "functions", self._functions, methods=["GET"])
         app.add_url_rule("/api/samples", "samples", self._samples, methods=["GET"])
         app.add_url_rule("/api/jobs", "jobs", self._jobs, methods=["GET", "POST"])
+        app.add_url_rule("/api/jobs/preflight", "jobs_preflight",
+                         self._jobs_preflight, methods=["POST"])
         app.add_url_rule("/api/jobs/<job_id>", "job_detail", self._job_detail, methods=["GET"])
         app.add_url_rule("/api/jobs/<job_id>/cancel", "job_cancel", self._job_cancel, methods=["POST"])
         app.add_url_rule("/api/jobs/<job_id>/tasks", "job_tasks", self._job_tasks, methods=["GET"])
@@ -172,10 +179,29 @@ class Master:
     def _samples(self):
         return jsonify(list_sample_jobs())
 
+    def _run_preflight(self, body: dict):
+        """Validate a submission body without creating any job."""
+        body.pop("_defaults", None)
+        body["_defaults"] = self.config_manager.load_defaults().to_dict()
+        result = self.preflight.run(body, body["_defaults"])
+        return result, body
+
+    def _jobs_preflight(self):
+        body = request.get_json(silent=True) or {}
+        result, _ = self._run_preflight(body)
+        # The check itself succeeds as an HTTP call even when findings block the
+        # job; ``ok`` carries the verdict so the UI can render every finding.
+        return jsonify(result.to_dict()), 200
+
     def _jobs(self):
         if request.method == "POST":
             body = request.get_json(silent=True) or {}
-            body["_defaults"] = self.config_manager.load_defaults().to_dict()
+            result, body = self._run_preflight(body)
+            if not result.ok:
+                return jsonify({
+                    "error": "preflight 预检未通过 / preflight failed",
+                    "preflight": result.to_dict(),
+                }), 400
             try:
                 job = self.job_manager.submit(body)
             except (ValueError, KeyError) as exc:

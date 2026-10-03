@@ -99,6 +99,17 @@ class Scheduler:
     # ------------------------------------------------------------------
     def _advance(self, job: Job) -> None:
         status = job.status
+        if status == C.JOB_PENDING:
+            # Blocked on upstream jobs; activate as soon as they all succeed.
+            if self.job_manager.dependencies_met(job):
+                self.job_manager.apply_job(job.job_id, lambda j: (
+                    setattr(j, "status", C.JOB_MAP),
+                    setattr(j, "started_ms", now_ms()) if not j.started_ms else None,
+                ))
+                self.logbus.info(job.job_id,
+                                 "all upstream dependencies satisfied; job activated",
+                                 task_id="submit")
+            return
         if status == C.JOB_MAP:
             self._dispatch_tasks(job, C.TASK_MAP)
             map_tasks = self.job_manager.tasks_for(job.job_id, C.TASK_MAP)
